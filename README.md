@@ -21,6 +21,8 @@ memcached последняя версия из репозитория sudo apt-g
 
 Конфигурации laravel в файле .env здесь находятся конфиги подключения к базе и движок кэша memcached
 
+Дамп с базой dump.sql в корне проекта
+
 DB_CONNECTION=mysql
 
 DB_HOST=127.0.0.1
