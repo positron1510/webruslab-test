@@ -21,23 +21,15 @@ class Memcache extends Cache
 
     /**
      *
+     * Время жизни ключа post_id в кэше
+     */
+    const POST_CACHE_TIME = 2;
+
+    /**
+     *
      * Задержка между итерациями цикла при блокировке
      */
     const DELAY = 1000;
-
-    /**
-     * Memcache constructor.
-     *
-     * При вызове любого метода контроллера проверяем есть ли в кэше ключ posts
-     * если нет создаем присваивая значение пустой массив
-     * в нем будут храниться пары $post_id => $count_views
-     */
-    public function __construct()
-    {
-        if (!self::has('posts')) {
-            self::forever('posts', []);
-        }
-    }
 
     /**
      * @param int $post_id
@@ -47,13 +39,17 @@ class Memcache extends Cache
      */
     public function incrementPostViews(int $post_id):void
     {
-        $this->lock();
+        # блокировка по ключу lock<post_id> в мемкэше
+        $this->lock($post_id);
 
-        $posts = self::get('posts');
-        $posts[$post_id] = isset($posts[$post_id]) ? $posts[$post_id] += 1 : 1;
-        self::forever('posts', $posts);
+        if (!self::has($post_id)) {
+            self::put($post_id, 0, self::POST_CACHE_TIME);
+        }
+        # тот самый атомарный инкремент
+        self::increment($post_id);
 
-        $this->unlock();
+        # разблокировка ключа lock<post_id> в мемкэше
+        $this->unlock($post_id);
     }
 
     /**
@@ -64,27 +60,28 @@ class Memcache extends Cache
      */
     public static function getViewsByPostId(int $post_id):int
     {
-        $posts = self::get('posts');
-        return $posts[$post_id] ?? 0;
+        return (int) self::get($post_id);
     }
 
     /**
+     * @param int $post_id
      *
      * Блокировка
      */
-    public function lock():void
+    public function lock(int $post_id=0):void
     {
-        while (!self::add('lock', '', self::CACHE_TIME)) {
+        while (!self::add(sprintf('lock%s', $post_id), '', self::CACHE_TIME)) {
             usleep(self::DELAY);
         }
     }
 
     /**
+     * @param int $post_id
      *
      * Разблокировка
      */
-    public function unlock():void
+    public function unlock(int $post_id=0):void
     {
-        self::forget('lock');
+        self::forget(sprintf('lock%s', $post_id));
     }
 }

@@ -37,13 +37,17 @@ class Repository
      */
     public function getOnePost(int $post_id):\stdClass
     {
-        $post = DB::select('SELECT id,views FROM post WHERE id=?', [$post_id]);
-        if (!isset($post[0])) {
+        $post = DB::table('post')
+            ->select('id', 'views')
+            ->where('id', $post_id)
+            ->first();
+
+        if (!$post) {
             return new \stdClass();
         }
-        $post[0]->views += Memcache::getViewsByPostId($post[0]->id);
+        $post->views += Memcache::getViewsByPostId($post->id);
 
-        return $post[0];
+        return $post;
     }
 
     /**
@@ -52,11 +56,12 @@ class Repository
      */
     public function addPost():void
     {
-       DB::insert('INSERT INTO post (views) VALUES (0)');
-       $post = DB::select('SELECT LAST_INSERT_ID() AS post_id');
-       if (isset($post[0]->post_id)) {
-           $this->insertOrUpdateViews($post[0]->post_id);
-       }
+        $post_id = DB::table('post')
+            ->insertGetId(['views' => 0]);
+
+        if ($post_id) {
+            $this->insertOrUpdateViews($post_id);
+        }
     }
 
     /**
@@ -68,38 +73,71 @@ class Repository
      */
     public function insertOrUpdateViews(int $post_id, int $count=0):void
     {
-        $views = DB::select('SELECT post_id,value FROM views WHERE post_id=? AND dt=DATE(NOW())', [$post_id]);
-        if ($views) {
-            if (isset($views[0]->value)) {
-                $count += $views[0]->value;
-                DB::update('UPDATE views SET value=? WHERE post_id=? AND dt=DATE(NOW())', [$count, $post_id]);
-            }
+        $current_date = date('Y-m-d');
+
+        $value = DB::table('views')
+            ->where('post_id', $post_id)
+            ->where('dt', $current_date)
+            ->pluck('value')
+            ->first();
+
+        if (!is_null($value)) {
+            $count += $value;
+            DB::table('views')
+                ->where('post_id', $post_id)
+                ->where('dt', $current_date)
+                ->update(['value' => $count]);
         }else {
-            DB::insert('INSERT INTO views (post_id, value, dt) VALUES (?, 0, DATE(NOW()))', [$post_id]);
+            DB::table('views')
+                ->insert(['post_id' => $post_id, 'value' => $count, 'dt' => $current_date]);
         }
     }
 
     /**
+     * @param \App\Memcache $memcache
      * @return int
      *
      * Сохранение просмотров по постам в базу и сброс кэша
+     * для получения всех ключей находящихся с мемкэше воспользуемся методом getAllKeys()
+     * документация https://www.php.net/manual/ru/memcached.getallkeys.php
+     * тут написано что мемкэш не гарантирует возврата всех ключей, тогда альтернатива пробежаться по всем айдишникам из базы?
+     * или может быть воспользоваться другой системой кэширования?
      */
-    public function savePostsViews():int
+    public function savePostsViews(Memcache $memcache):int
     {
-        $posts = Memcache::get('posts');
+        $posts = Memcache::getStore()->getMemcached()->getAllKeys();
 
-        if ($posts) {
-            foreach ($posts as $post_id=>$views) {
-                $post_data = DB::select('SELECT views FROM post WHERE id=?', [$post_id]);
-                if (isset($post_data[0])) {
-                    $views += $post_data[0]->views;
-                    DB::update('UPDATE post SET views=? WHERE id=?', [$views, $post_id]);
-                    $this->insertOrUpdateViews($post_id, $post_data[0]->views);
-                }
-            }
-            Memcache::forever('posts', []);
+        $saved_views = 0;
+        foreach ($posts as $post_id) {
+            # ларавель почему то при вызове getAllKeys() к каждому ключу добавляет префикс laravel_cache:
+            $post_id = (int) str_replace('laravel_cache:', '', $post_id);
+
+            if (!$post_id) continue;
+
+            $views = (int) DB::table('post')
+                ->where('id', $post_id)
+                ->pluck('views')
+                ->first();
+
+            # блокировка на изменение просмотров именно этого поста с $post_id
+            $memcache->lock($post_id);
+
+            $views_from_cache = Memcache::getViewsByPostId($post_id);
+            $views += $views_from_cache;
+
+            DB::table('post')
+                ->where('id', $post_id)
+                ->update(['views' => $views]);
+
+            $this->insertOrUpdateViews($post_id, $views_from_cache);
+
+            # удаляем кол-во просмотров поста, после чего снимаем блокировку
+            Memcache::forget($post_id);
+
+            $memcache->unlock($post_id);
+            $saved_views++;
         }
 
-        return count($posts);
+        return $saved_views;
     }
 }
