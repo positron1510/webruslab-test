@@ -4,7 +4,7 @@
 
 cd /var/www/webruslab-test
 
-php artisan views:save
+composer install
 
 
 ОС: Ubuntu 18.04
