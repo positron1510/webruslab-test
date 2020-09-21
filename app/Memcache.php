@@ -55,14 +55,14 @@ class Memcache extends Cache
 
         if (!$result) {
             $this->lock();
-            self::add($post_id, 1, self::POST_CACHE_TIME);
-            $this->unlock();
-        }
 
-        $posts = self::get('posts');
-        if (!in_array($post_id, $posts)) {
+            self::add($post_id, 1, self::POST_CACHE_TIME);
+
+            $posts = self::get('posts');
             $posts[] = $post_id;
             self::forever('posts', $posts);
+
+            $this->unlock();
         }
     }
 
