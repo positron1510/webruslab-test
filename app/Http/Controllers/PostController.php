@@ -21,22 +21,13 @@ class PostController extends Controller
     private $repository;
 
     /**
-     * @var Memcache
-     *
-     * Экземпляр класса Memcache
-     */
-    private $memcache;
-
-    /**
      * PostController constructor.
      *
      * Инициализируем экземпляр класса-репозитория для работы с базой
-     * Инициализируем экземпляр класса Memcache
      */
     public function __construct()
     {
         $this->repository = new Repository();
-        $this->memcache = new Memcache();
     }
 
     /**
@@ -55,6 +46,7 @@ class PostController extends Controller
     }
 
     /**
+     * @param Memcache $memcache
      * @param int $post_id
      * @return \Illuminate\Contracts\View\Factory|\Illuminate\View\View
      *
@@ -63,9 +55,9 @@ class PostController extends Controller
      *
      * Вывод поста по его идентификатору
      */
-    public function getOnePost(int $post_id)
+    public function getOnePost(Memcache $memcache, int $post_id)
     {
-        $this->memcache->incrementPostViews($post_id);
+        $memcache->incrementPostViews($post_id);
 
         return view('one_post', [
             'post' => $this->repository->getOnePost($post_id)
